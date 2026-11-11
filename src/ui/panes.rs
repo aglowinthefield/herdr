@@ -590,7 +590,7 @@ fn render_pane_borders(
         let focused = pane_infos
             .iter()
             .any(|info| info.is_focused && line_touches_pane(x, y, info, app.pane_gaps));
-        let symbol = line_cell_symbol(line);
+        let symbol = pane_border_symbol(line, focused);
         if symbol.is_empty() {
             continue;
         }
@@ -779,6 +779,15 @@ fn render_pane_border_titles(
             end_x.saturating_sub(start_x) as usize,
             style,
         );
+    }
+}
+
+/// Inactive straight strokes are dashed; corners and junctions stay solid.
+fn pane_border_symbol(line: LineCell, focused: bool) -> &'static str {
+    match line_cell_symbol(line) {
+        "│" if !focused => "╎",
+        "─" if !focused => "╌",
+        symbol => symbol,
     }
 }
 
@@ -1268,6 +1277,33 @@ mod tests {
         assert_eq!(buffer[(2, 2)].style().fg, Some(app.palette.accent));
         assert_eq!(buffer[(2, 1)].symbol(), "│");
         assert_eq!(buffer[(2, 1)].style().fg, Some(app.palette.accent));
+        assert_eq!(buffer[(3, 1)].symbol(), "╎");
+        assert_eq!(buffer[(3, 1)].style().fg, Some(app.palette.overlay0));
+        assert_eq!(buffer[(3, 2)].symbol(), "┤");
+    }
+
+    #[test]
+    fn inactive_straight_strokes_are_dashed_and_corners_stay_solid() {
+        let h = LineCell {
+            left: true,
+            right: true,
+            ..Default::default()
+        };
+        let v = LineCell {
+            up: true,
+            down: true,
+            ..Default::default()
+        };
+        let corner = LineCell {
+            down: true,
+            right: true,
+            ..Default::default()
+        };
+        assert_eq!(pane_border_symbol(h, false), "╌");
+        assert_eq!(pane_border_symbol(v, false), "╎");
+        assert_eq!(pane_border_symbol(h, true), "─");
+        assert_eq!(pane_border_symbol(v, true), "│");
+        assert_eq!(pane_border_symbol(corner, false), "┌");
     }
 
     #[test]
@@ -1302,8 +1338,12 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(1, 1)].symbol(), "│");
         assert_eq!(buffer[(1, 1)].style().fg, Some(app.palette.accent));
+        assert_eq!(buffer[(2, 1)].symbol(), "╎");
         assert_eq!(buffer[(2, 1)].style().fg, Some(app.palette.overlay0));
+        assert_eq!(buffer[(3, 0)].symbol(), "┐");
+        assert_eq!(buffer[(0, 0)].symbol(), "┌");
     }
 
     #[tokio::test]
