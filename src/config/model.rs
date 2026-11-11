@@ -880,6 +880,34 @@ pub enum TabBarPositionConfig {
     Bottom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneBorderLineConfig {
+    Solid,
+    Dashed,
+    Dotted,
+    Heavy,
+    Rounded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct PaneBorderStyleConfig {
+    /// Line style for the focused pane. Default: solid.
+    pub active: PaneBorderLineConfig,
+    /// Line style for unfocused panes. Default: dashed.
+    pub inactive: PaneBorderLineConfig,
+}
+
+impl Default for PaneBorderStyleConfig {
+    fn default() -> Self {
+        Self {
+            active: PaneBorderLineConfig::Solid,
+            inactive: PaneBorderLineConfig::Dashed,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PaneBordersConfig {
     #[default]
@@ -972,6 +1000,9 @@ pub struct UiConfig {
     /// disables them. Legacy booleans map true to auto and false to off.
     /// Default: auto.
     pub pane_borders: PaneBordersConfig,
+    /// Line styles for pane borders: solid, dashed, dotted, heavy, or rounded.
+    /// Default: active solid, inactive dashed.
+    pub pane_border_style: PaneBorderStyleConfig,
     /// Draw borders along the outside edge of the pane area. Default: true.
     pub pane_outer_borders: bool,
     /// Draw interactive scrollbars beside terminal panes. Default: true.
@@ -1214,6 +1245,7 @@ impl Default for UiConfig {
             prompt_new_tab_name: true,
             prompt_new_workspace_name: false,
             pane_borders: PaneBordersConfig::Auto,
+            pane_border_style: PaneBorderStyleConfig::default(),
             pane_outer_borders: true,
             pane_scrollbars: true,
             pane_gaps: true,
@@ -1490,6 +1522,41 @@ status_indicators = "symbols"
         )
         .unwrap();
         assert_eq!(config.ui.status_indicators, StatusIndicatorStyle::Symbols);
+    }
+
+    #[test]
+    fn pane_border_style_parses_and_defaults() {
+        let config: Config = toml::from_str(
+            "[ui]\npane_borders = \"always\"\n[ui.pane_border_style]\nactive = \"heavy\"\ninactive = \"dotted\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.ui.pane_borders, PaneBordersConfig::Always);
+        assert_eq!(
+            config.ui.pane_border_style.active,
+            PaneBorderLineConfig::Heavy
+        );
+        assert_eq!(
+            config.ui.pane_border_style.inactive,
+            PaneBorderLineConfig::Dotted
+        );
+
+        let partial: Config =
+            toml::from_str("[ui.pane_border_style]\nactive = \"rounded\"\n").unwrap();
+        assert_eq!(
+            partial.ui.pane_border_style.active,
+            PaneBorderLineConfig::Rounded
+        );
+        assert_eq!(
+            partial.ui.pane_border_style.inactive,
+            PaneBorderLineConfig::Dashed
+        );
+
+        let defaults: Config = toml::from_str("").unwrap();
+        assert_eq!(
+            defaults.ui.pane_border_style,
+            PaneBorderStyleConfig::default()
+        );
+        assert!(toml::from_str::<Config>("[ui.pane_border_style]\nactive = \"wavy\"\n").is_err());
     }
 
     #[test]

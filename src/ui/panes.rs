@@ -13,6 +13,7 @@ use super::text::truncate_end;
 use super::widgets::panel_contrast_fg;
 use crate::app::state::Palette;
 use crate::app::AppState;
+use crate::config::PaneBorderLineConfig;
 use crate::layout::{PaneId, PaneInfo};
 use crate::popup_size::resolve_popup_geometry;
 use crate::terminal::{TerminalRuntime, TerminalRuntimeRegistry};
@@ -577,9 +578,26 @@ fn render_pane_borders(
     }
     add_split_border_cells(app.pane_gaps, split_borders, &mut cells);
 
+    let focus: std::collections::HashMap<(u16, u16), bool> = cells
+        .keys()
+        .map(|&(x, y)| {
+            let focused = pane_infos
+                .iter()
+                .any(|info| info.is_focused && line_touches_pane(x, y, info, app.pane_gaps));
+            ((x, y), focused)
+        })
+        .collect();
+    let style_for = |focused: bool| {
+        if focused {
+            app.pane_border_style.active
+        } else {
+            app.pane_border_style.inactive
+        }
+    };
+
     let buf = frame.buffer_mut();
     let area = buf.area;
-    for ((x, y), line) in cells {
+    for (&(x, y), &line) in &cells {
         if x < area.x
             || x >= area.x.saturating_add(area.width)
             || y < area.y
@@ -587,10 +605,20 @@ fn render_pane_borders(
         {
             continue;
         }
-        let focused = pane_infos
-            .iter()
-            .any(|info| info.is_focused && line_touches_pane(x, y, info, app.pane_gaps));
-        let symbol = pane_border_symbol(line, focused);
+        let focused = focus[&(x, y)];
+        let own = style_for(focused);
+        let arm = |nx: Option<u16>, ny: Option<u16>| {
+            nx.zip(ny)
+                .and_then(|pos| focus.get(&pos).copied())
+                .map_or(own, |neighbor| style_for(focused && neighbor))
+        };
+        let arms = ArmStyles {
+            up: arm(Some(x), y.checked_sub(1)),
+            down: arm(Some(x), y.checked_add(1)),
+            left: arm(x.checked_sub(1), Some(y)),
+            right: arm(x.checked_add(1), Some(y)),
+        };
+        let symbol = pane_border_symbol(line, own, arms);
         if symbol.is_empty() {
             continue;
         }
@@ -782,12 +810,91 @@ fn render_pane_border_titles(
     }
 }
 
-/// Inactive straight strokes are dashed; corners and junctions stay solid.
-fn pane_border_symbol(line: LineCell, focused: bool) -> &'static str {
-    match line_cell_symbol(line) {
-        "│" if !focused => "╎",
-        "─" if !focused => "╌",
-        symbol => symbol,
+#[derive(Clone, Copy)]
+struct ArmStyles {
+    up: PaneBorderLineConfig,
+    down: PaneBorderLineConfig,
+    left: PaneBorderLineConfig,
+    right: PaneBorderLineConfig,
+}
+
+/// Straight strokes use the cell's own style. Corners and junctions take each
+/// arm's style from the segment toward the neighboring cell (active only when
+/// both cells are focused), so heavy and light edges meet with
+/// mixed box-drawing glyphs. Dashed and dotted styles have light corners.
+fn pane_border_symbol(line: LineCell, own: PaneBorderLineConfig, arms: ArmStyles) -> &'static str {
+    use PaneBorderLineConfig::{Dashed, Dotted, Heavy, Rounded};
+    let symbol = line_cell_symbol(line);
+    match symbol {
+        "│" => {
+            return match own {
+                Heavy => "┃",
+                Dashed => "╎",
+                Dotted => "┊",
+                _ => "│",
+            }
+        }
+        "─" => {
+            return match own {
+                Heavy => "━",
+                Dashed => "╌",
+                Dotted => "┈",
+                _ => "─",
+            }
+        }
+        "" => return "",
+        _ => {}
+    }
+    let h = |style: PaneBorderLineConfig, present: bool| present && style == Heavy;
+    let (u, d, l, r) = (
+        h(arms.up, line.up),
+        h(arms.down, line.down),
+        h(arms.left, line.left),
+        h(arms.right, line.right),
+    );
+    if !(u || d || l || r) {
+        let rounded = own == Rounded
+            && [
+                (line.up, arms.up),
+                (line.down, arms.down),
+                (line.left, arms.left),
+                (line.right, arms.right),
+            ]
+            .iter()
+            .all(|&(present, style)| !present || style == Rounded);
+        if rounded {
+            return match symbol {
+                "┌" => "╭",
+                "┐" => "╮",
+                "└" => "╰",
+                "┘" => "╯",
+                other => other,
+            };
+        }
+        return symbol;
+    }
+    mixed_weight_symbol(symbol, u, d, l, r)
+}
+
+/// Box-drawing glyph for a light corner or junction with some arms heavy.
+fn mixed_weight_symbol(light: &'static str, u: bool, d: bool, l: bool, r: bool) -> &'static str {
+    match light {
+        "┌" => ["┌", "┍", "┎", "┏"][usize::from(r) | usize::from(d) << 1],
+        "┐" => ["┐", "┑", "┒", "┓"][usize::from(l) | usize::from(d) << 1],
+        "└" => ["└", "┕", "┖", "┗"][usize::from(r) | usize::from(u) << 1],
+        "┘" => ["┘", "┙", "┚", "┛"][usize::from(l) | usize::from(u) << 1],
+        "├" => ["├", "┝", "┞", "┡", "┟", "┢", "┠", "┣"]
+            [usize::from(r) | usize::from(u) << 1 | usize::from(d) << 2],
+        "┤" => ["┤", "┥", "┦", "┩", "┧", "┪", "┨", "┫"]
+            [usize::from(l) | usize::from(u) << 1 | usize::from(d) << 2],
+        "┬" => ["┬", "┭", "┮", "┯", "┰", "┱", "┲", "┳"]
+            [usize::from(l) | usize::from(r) << 1 | usize::from(d) << 2],
+        "┴" => ["┴", "┵", "┶", "┷", "┸", "┹", "┺", "┻"]
+            [usize::from(l) | usize::from(r) << 1 | usize::from(u) << 2],
+        "┼" => [
+            "┼", "┽", "┾", "┿", "╀", "╃", "╄", "╇", "╁", "╅", "╆", "╈", "╂", "╉", "╊", "╋",
+        ][usize::from(l) | usize::from(r) << 1 | usize::from(u) << 2 | usize::from(d) << 3],
+        other => other,
     }
 }
 
@@ -1283,27 +1390,110 @@ mod tests {
     }
 
     #[test]
-    fn inactive_straight_strokes_are_dashed_and_corners_stay_solid() {
-        let h = LineCell {
-            left: true,
-            right: true,
-            ..Default::default()
-        };
-        let v = LineCell {
-            up: true,
-            down: true,
-            ..Default::default()
-        };
+    fn heavy_active_edges_meet_dotted_inactive_edges_with_mixed_junctions() {
+        let mut app = AppState::test_new();
+        app.pane_border_style.active = PaneBorderLineConfig::Heavy;
+        app.pane_border_style.inactive = PaneBorderLineConfig::Dotted;
+        app.view.terminal_area = Rect::new(0, 0, 4, 4);
+        app.view.pane_infos = vec![
+            PaneInfo {
+                id: PaneId::from_raw(1),
+                rect: Rect::new(0, 0, 2, 2),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::TOP | Borders::LEFT,
+                is_focused: true,
+            },
+            PaneInfo {
+                id: PaneId::from_raw(2),
+                rect: Rect::new(2, 0, 2, 2),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::TOP | Borders::LEFT | Borders::RIGHT,
+                is_focused: false,
+            },
+            PaneInfo {
+                id: PaneId::from_raw(3),
+                rect: Rect::new(0, 2, 2, 2),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::TOP | Borders::LEFT | Borders::BOTTOM,
+                is_focused: false,
+            },
+            PaneInfo {
+                id: PaneId::from_raw(4),
+                rect: Rect::new(2, 2, 2, 2),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::ALL,
+                is_focused: false,
+            },
+        ];
+        let split_borders = vec![
+            crate::layout::SplitBorder {
+                pos: 2,
+                direction: ratatui::layout::Direction::Horizontal,
+                ratio: 0.5,
+                area: Rect::new(0, 0, 4, 4),
+                path: vec![],
+            },
+            crate::layout::SplitBorder {
+                pos: 2,
+                direction: ratatui::layout::Direction::Vertical,
+                ratio: 0.5,
+                area: Rect::new(0, 0, 4, 4),
+                path: vec![false],
+            },
+        ];
+        let ws = Workspace::test_new("test");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(4, 4)).unwrap();
+
+        terminal
+            .draw(|frame| render_view_pane_borders(&app, &ws, &split_borders, frame))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 0)].symbol(), "┏");
+        assert_eq!(buffer[(1, 0)].symbol(), "━");
+        assert_eq!(buffer[(2, 0)].symbol(), "┱");
+        assert_eq!(buffer[(3, 0)].symbol(), "┐");
+        assert_eq!(buffer[(0, 1)].symbol(), "┃");
+        assert_eq!(buffer[(2, 1)].symbol(), "┃");
+        assert_eq!(buffer[(3, 1)].symbol(), "┊");
+        assert_eq!(buffer[(0, 2)].symbol(), "┡");
+        assert_eq!(buffer[(2, 2)].symbol(), "╃");
+        assert_eq!(buffer[(3, 2)].symbol(), "┤");
+        assert_eq!(buffer[(2, 3)].symbol(), "┴");
+    }
+
+    #[test]
+    fn rounded_style_rounds_corners_only_where_all_arms_are_rounded() {
         let corner = LineCell {
             down: true,
             right: true,
             ..Default::default()
         };
-        assert_eq!(pane_border_symbol(h, false), "╌");
-        assert_eq!(pane_border_symbol(v, false), "╎");
-        assert_eq!(pane_border_symbol(h, true), "─");
-        assert_eq!(pane_border_symbol(v, true), "│");
-        assert_eq!(pane_border_symbol(corner, false), "┌");
+        let tee = LineCell {
+            up: true,
+            down: true,
+            right: true,
+            ..Default::default()
+        };
+        let all = |style| ArmStyles {
+            up: style,
+            down: style,
+            left: style,
+            right: style,
+        };
+        let rounded = PaneBorderLineConfig::Rounded;
+        assert_eq!(pane_border_symbol(corner, rounded, all(rounded)), "╭");
+        assert_eq!(pane_border_symbol(tee, rounded, all(rounded)), "├");
+        let mut mixed = all(rounded);
+        mixed.right = PaneBorderLineConfig::Solid;
+        assert_eq!(pane_border_symbol(corner, rounded, mixed), "┌");
+        let dashed = PaneBorderLineConfig::Dashed;
+        assert_eq!(pane_border_symbol(corner, dashed, all(dashed)), "┌");
     }
 
     #[test]
