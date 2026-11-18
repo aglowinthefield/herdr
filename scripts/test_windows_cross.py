@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from scripts import windows_cross
 
@@ -68,6 +68,7 @@ class WindowsCrossTests(unittest.TestCase):
             with patch.object(windows_cross, "SDK_ROOT", Path(directory)), \
                     patch.object(windows_cross.shutil, "which", return_value="tool"), \
                     patch.object(windows_cross, "libc_contents", return_value="configuration"), \
+                    patch.object(windows_cross, "link_macos_libsystem"), \
                     patch.object(windows_cross.subprocess, "run") as run:
                 for accepted in (False, True):
                     run.reset_mock()
@@ -76,6 +77,19 @@ class WindowsCrossTests(unittest.TestCase):
                     self.assertEqual("--accept-license" in command, accepted)
                     self.assertEqual(command[0], "xwin")
                     self.assertIn("--copy", command)
+
+    def test_macos_libsystem_link_points_at_the_host_sdk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sdk = Path(directory) / "MacOSX.sdk"
+            (sdk / "usr/lib").mkdir(parents=True)
+            (sdk / "usr/lib/libSystem.tbd").write_text("stub")
+            root = Path(directory) / "windows-cross"
+            result = Mock(stdout=f"{sdk}\n")
+            with patch.object(windows_cross.subprocess, "run", return_value=result):
+                windows_cross.link_macos_libsystem(root)
+                windows_cross.link_macos_libsystem(root)
+            link = root / "usr/lib/libSystem.tbd"
+            self.assertEqual(link.resolve(), (sdk / "usr/lib/libSystem.tbd").resolve())
 
 
 if __name__ == "__main__":

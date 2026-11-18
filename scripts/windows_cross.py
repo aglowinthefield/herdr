@@ -47,6 +47,21 @@ def libc_path() -> Path:
     return path.resolve()
 
 
+def link_macos_libsystem(root: Path) -> None:
+    # `zig build --libc` also applies the Windows libc file to native build
+    # helpers, which then look for libSystem under the SDK root on macOS.
+    sdk = subprocess.run(
+        ["xcrun", "--show-sdk-path"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    libsystem = Path(sdk) / "usr/lib/libSystem.tbd"
+    if not libsystem.is_file():
+        raise ValueError(f"macOS SDK is missing {libsystem}")
+    link = root / "usr/lib/libSystem.tbd"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.unlink(missing_ok=True)
+    link.symlink_to(libsystem)
+
+
 def setup(accept_license: bool) -> None:
     if not shutil.which("xwin"):
         raise ValueError("Install xwin first: cargo install xwin --locked")
@@ -60,6 +75,8 @@ def setup(accept_license: bool) -> None:
         if accept_license:
             command.append("--accept-license")
         subprocess.run(command + ["splat", "--copy", "--output", str(SDK_ROOT)], check=True)
+    if sys.platform == "darwin":
+        link_macos_libsystem(SDK_ROOT)
     config = SDK_ROOT / "libc.txt"
     config.write_text(libc_contents(SDK_ROOT))
     subprocess.run(
