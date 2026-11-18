@@ -129,6 +129,11 @@ fn spawn_server_with_path(
     cmd.env_remove("HERDR_ENV");
     if let Some(path) = path_override {
         cmd.env("PATH", path);
+        // A login shell reads the developer's profile, which can put real agent
+        // binaries ahead of the test's fakes. Give the pane an empty HOME.
+        let home = config_home.with_file_name("home");
+        fs::create_dir_all(&home).unwrap();
+        cmd.env("HOME", home);
     }
 
     let child = pair.slave.spawn_command(cmd).unwrap();
