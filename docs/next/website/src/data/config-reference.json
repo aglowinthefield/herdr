@@ -977,15 +977,29 @@
         },
         {
           "key": "ui.pane_border_style.active",
-          "type": "string",
+          "type": "enum",
           "default": "\"solid\"",
-          "description": "Line style for the focused pane border: solid, dashed, dotted, heavy, or rounded."
+          "description": "Line style for the focused pane border.",
+          "values": [
+            "solid",
+            "dashed",
+            "dotted",
+            "heavy",
+            "rounded"
+          ]
         },
         {
           "key": "ui.pane_border_style.inactive",
-          "type": "string",
+          "type": "enum",
           "default": "\"dashed\"",
-          "description": "Line style for unfocused pane borders: solid, dashed, dotted, heavy, or rounded."
+          "description": "Line style for unfocused pane borders.",
+          "values": [
+            "solid",
+            "dashed",
+            "dotted",
+            "heavy",
+            "rounded"
+          ]
         },
         {
           "key": "ui.pane_outer_borders",
