@@ -68,6 +68,30 @@ impl ClientShellState {
         }
     }
 
+    /// Re-resolve the palette from the theme config and what the host
+    /// terminal has reported about itself. Returns whether it changed.
+    pub(super) fn refresh_palette(&mut self) -> bool {
+        let previewing = matches!(self.overlay, Some(ClientShellOverlay::Settings(_)));
+        let palette = if previewing {
+            crate::app::client_palette_for_theme(
+                &self.config.theme_runtime,
+                &self.config.theme_name,
+                Some(&self.host_theme),
+            )
+        } else {
+            crate::app::client_palette_for_host(
+                &self.config.theme_runtime,
+                self.host_appearance,
+                Some(&self.host_theme),
+            )
+        };
+        if self.config.palette == palette {
+            return false;
+        }
+        self.config.palette = palette;
+        true
+    }
+
     pub(crate) fn reload_client_config(&mut self) {
         match crate::config::load_live_config() {
             Ok(loaded) => {
@@ -77,12 +101,7 @@ impl ClientShellState {
                     &loaded.diagnostics,
                     &loaded.invalid_sections,
                 );
-                if let Some(appearance) = self.host_appearance {
-                    self.config.palette = crate::app::client_palette_for_appearance(
-                        &self.config.theme_runtime,
-                        appearance,
-                    );
-                }
+                self.refresh_palette();
                 if !self.sidebar_width_manual {
                     self.sidebar_width = self.config.sidebar_width;
                 }

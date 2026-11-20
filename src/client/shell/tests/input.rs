@@ -5,13 +5,15 @@ fn host_appearance_prefers_explicit_reports_over_background_inference() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.config.theme_runtime.auto_switch = true;
 
-    let light = crate::app::client_palette_for_appearance(
+    let light = crate::app::client_palette_for_host(
         &state.config.theme_runtime,
-        crate::terminal_theme::HostAppearance::Light,
+        Some(crate::terminal_theme::HostAppearance::Light),
+        None,
     );
-    let dark = crate::app::client_palette_for_appearance(
+    let dark = crate::app::client_palette_for_host(
         &state.config.theme_runtime,
-        crate::terminal_theme::HostAppearance::Dark,
+        Some(crate::terminal_theme::HostAppearance::Dark),
+        None,
     );
 
     let inferred = state.handle_raw_events(vec![RawInputEvent::HostDefaultColor {
@@ -1050,4 +1052,42 @@ fn committed_text_still_reaches_a_report_all_pane_as_text() {
     assert_eq!(state.mode, ClientShellMode::Terminal);
     let after = state.handle_input_bytes("\u{3042}".as_bytes());
     assert_eq!(pane_text_commits(&after).concat(), "\u{3042}");
+}
+
+#[test]
+fn terminal_theme_adapts_once_host_reports_default_colors() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.config.theme_runtime.manual_name = "terminal".to_owned();
+    state.config.theme_name = "terminal".to_owned();
+    state.refresh_palette();
+    let ansi = crate::app::state::Palette::terminal();
+    assert_eq!(state.config.palette, ansi);
+
+    let color = |r, g, b| crate::terminal_theme::RgbColor { r, g, b };
+    let background = state.handle_raw_events(vec![RawInputEvent::HostDefaultColor {
+        kind: crate::terminal_theme::DefaultColorKind::Background,
+        color: color(239, 233, 214),
+    }]);
+    assert!(background.repaint);
+    assert_eq!(state.config.palette, ansi, "needs the foreground too");
+
+    let foreground = state.handle_raw_events(vec![RawInputEvent::HostDefaultColor {
+        kind: crate::terminal_theme::DefaultColorKind::Foreground,
+        color: color(80, 85, 90),
+    }]);
+    assert!(foreground.repaint);
+    assert_ne!(state.config.palette, ansi);
+    assert_eq!(state.config.palette.panel_bg, ratatui::style::Color::Reset);
+
+    let blue = state.handle_raw_events(vec![RawInputEvent::HostPaletteColors {
+        colors: vec![(4, color(84, 145, 192))],
+    }]);
+    assert!(blue.repaint);
+    let adapted = state.config.palette.clone();
+
+    let unchanged = state.handle_raw_events(vec![RawInputEvent::HostPaletteColors {
+        colors: vec![(4, color(84, 145, 192))],
+    }]);
+    assert!(!unchanged.repaint);
+    assert_eq!(state.config.palette, adapted);
 }

@@ -336,38 +336,35 @@ impl ClientShellState {
                     self.host_appearance = Some(appearance);
                     self.host_appearance_explicit = true;
                     outcome.query_host_theme = true;
-                    if self.config.theme_runtime.auto_switch {
-                        self.config.palette = crate::app::client_palette_for_appearance(
-                            &self.config.theme_runtime,
-                            appearance,
-                        );
-                        outcome.repaint = true;
-                    }
+                    outcome.repaint |= self.refresh_palette();
                 }
-                RawInputEvent::HostDefaultColor {
-                    kind: crate::terminal_theme::DefaultColorKind::Background,
-                    color,
-                } => {
-                    if self.host_background != Some(color) {
-                        self.host_background = Some(color);
-                        outcome.repaint = true;
-                    }
-                    if !self.host_appearance_explicit {
-                        let appearance = color.inferred_appearance();
-                        self.host_appearance = Some(appearance);
-                        if self.config.theme_runtime.auto_switch {
-                            self.config.palette = crate::app::client_palette_for_appearance(
-                                &self.config.theme_runtime,
-                                appearance,
-                            );
-                            outcome.repaint = true;
+                RawInputEvent::HostDefaultColor { kind, color } => {
+                    let current = match kind {
+                        crate::terminal_theme::DefaultColorKind::Foreground => {
+                            self.host_theme.foreground
                         }
+                        crate::terminal_theme::DefaultColorKind::Background => {
+                            self.host_theme.background
+                        }
+                    };
+                    if current != Some(color) {
+                        self.host_theme = self.host_theme.with_color(kind, color);
+                        outcome.repaint = true;
                     }
+                    if kind == crate::terminal_theme::DefaultColorKind::Background
+                        && !self.host_appearance_explicit
+                    {
+                        self.host_appearance = Some(color.inferred_appearance());
+                    }
+                    outcome.repaint |= self.refresh_palette();
                 }
-                RawInputEvent::HostDefaultColor { .. }
-                | RawInputEvent::HostPaletteColors { .. }
-                | RawInputEvent::HostCellSizeReport { .. }
-                | RawInputEvent::Unsupported => {}
+                RawInputEvent::HostPaletteColors { colors } => {
+                    for (index, color) in colors {
+                        self.host_theme = self.host_theme.with_palette_color(index, color);
+                    }
+                    outcome.repaint |= self.refresh_palette();
+                }
+                RawInputEvent::HostCellSizeReport { .. } | RawInputEvent::Unsupported => {}
             }
             self.reconcile_input_source();
         }
